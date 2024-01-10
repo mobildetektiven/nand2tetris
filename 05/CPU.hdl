@@ -1,0 +1,92 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/05/CPU.hdl
+/**
+ * The Hack Central Processing unit (CPU).
+ * Parses the binary code in the instruction input and executes it according to the
+ * Hack machine language specification. In the case of a C-instruction, computes the
+ * function specified by the instruction. If the instruction specifies to read a memory
+ * value, the inM input is expected to contain this value. If the instruction specifies
+ * to write a value to the memory, sets the outM output to this value, sets the addressM
+ * output to the target address, and asserts the writeM output (when writeM == 0, any
+ * value may appear in outM).
+ * If the reset input is 0, computes the address of the next instruction and sets the
+ * pc output to that value. If the reset input is 1, sets pc to 0.
+ * Note: The outM and writeM outputs are combinational: they are affected by the
+ * instruction's execution during the current cycle. The addressM and pc outputs are
+ * clocked: although they are affected by the instruction's execution, they commit to
+ * their new values only in the next cycle.
+ */
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to restart the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // Address of next instruction
+
+    PARTS:
+    //Mux for updating A to either new memory location or manipulated number from ALU
+    //Only load new value if it is either an A instruction or the MS D bit is set
+    
+    //Chose
+    // DMux4Way(in[0]=instruction[15], in[1]=instruction[5], sel=true, b=loadInst, c=loadALU);
+
+    //A register shall only load new value if instruction is type A or the C instruction
+    //bit 5 set to true
+    And(a=instruction[15], b=instruction[5], out=loadARegAlu);
+    Not(in=instruction[15], out=aInst);
+    Or(a=aInst, b=loadARegAlu, out=aRegLoad);
+
+    Mux16(a=instruction, b=ALUOutputA, sel=loadARegAlu, out=aRegIn);
+    ARegister(in=aRegIn, load=aRegLoad, out=aRegOut, out=aRegOutPC, out[0..14]=addressM);
+
+    // Choose wheter to feed the A or M input to the ALU
+    Mux16(a=aRegOut, b=inM, sel=instruction[12], out=aluInput);
+
+    //D register value
+    DMux8Way(in=true, sel=instruction[3..5], c=dLog2, d=dLog3, g=dLog6, h=dLog7);
+    Or8Way(in[0]=dLog2, in[1]=dLog3, in[2]=dLog6, in[3]=dLog7, out=dRegLoadTemp);
+    And(a=instruction[15], b=dRegLoadTemp, out=dRegLoad);
+    DRegister(in=ALUOutputD, load=dRegLoad, out=dRegOut);
+
+    //ALU
+    ALU(x=dRegOut, y=aluInput, zx=instruction[11], nx=instruction[10], zy=instruction[9], ny=instruction[8], f=instruction[7], no=instruction[6], out=ALUOutputA, out=ALUOutputD, out=outM, zr=aluZero, ng=aluNeg);
+
+    //Program counter  
+        DMux8Way(in=true, sel=instruction[0..2], a=noJmp, b=jgt, c=jeq, d=jge, e=jlt, f=jne, g=jle, h=jmp);
+        DMux4Way(in=true, sel[0]=aluNeg, sel[1]=aluZero, a=aluPos);
+        
+        //Handle the different jump logic
+        And(a=jgt, b=aluPos, out=jgtTrue);
+        And(a=aluZero, b=jeq, out=jeqTrue);
+
+        Not(in=aluNeg, out=alutOutNotNegative);
+        And(a=alutOutNotNegative, b=jge, out=jgeTrue);
+        
+        And(a=aluNeg, b=jlt, out=jltTrue);
+
+        Not(in=aluZero, out=alutOutNotZero);
+        And(a=alutOutNotZero, b=jne, out=jneTrue);
+
+        Or(a=aluNeg, b=aluZero, out=aluLE);
+        And(a=aluLE, b=jle, out=jleTrue);
+
+        // Jump shall be executed if any of the true flags above are set
+        Or8Way(in[0]=jgtTrue, in[1]=jeqTrue, in[2]=jgeTrue, in[3]=jltTrue, in[4]=jneTrue, in[5]=jleTrue, in[6]=jmp, out=jmpTrue);
+        And(a=jmpTrue, b=instruction[15], out=pcJump);
+        // Nojmp or a instruction shall always lead to a 
+        Not(in=pcJump, out=incPC);
+        PC(in=aRegOutPC, load=pcJump, inc=incPC, reset=reset, out[0..14]=pc);
+
+    //write M
+    DMux8Way(in=true, sel=instruction[3..5], b=writeM1,d=writeM2, f=writeM3, h=writeM4);
+    Or8Way(in[0]=writeM1, in[1]=writeM2, in[2]=writeM3, in[3]=writeM4, out=writeMOr);
+    And(a=writeMOr, b=instruction[15], out=writeM);
+}
